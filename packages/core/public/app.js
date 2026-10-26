@@ -23,7 +23,14 @@ const state = {
   sending: false,
   skipHash: null,
   dynamicEnabled: false,
+  search: '', // sidebar chat filter
 };
+
+// Sidebar feature entries (top half of the sidebar). Add new ones here; each
+// gets an icon row, and `page` is matched against state.page for highlighting.
+const FEATURES = [
+  { id: 'apps', label: 'Apps', icon: 'grid', href: '#/apps', page: 'apps' },
+];
 
 // ---------------------------------------------------------------- icons ----
 const ICONS = {
@@ -52,6 +59,12 @@ const ICONS = {
   tool: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3.5 17.5l3 3 5.8-5.8a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4Z"/>',
   bulb: '<path d="M9 18h6M10 21.5h4M12 2.5a6.5 6.5 0 0 0-3.8 11.8c.5.4.8 1 .8 1.6V16h6v-.1c0-.6.3-1.2.8-1.6A6.5 6.5 0 0 0 12 2.5Z"/>',
   list: '<path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/>',
+  monitor: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+  moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6 6 6M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/>',
+  code: '<path d="m8 7-5 5 5 5M16 7l5 5-5 5"/>',
+  wifi: '<path d="M2 8.8a15 15 0 0 1 20 0M5 12.4a10 10 0 0 1 14 0M8.5 15.9a5 5 0 0 1 7 0"/><circle cx="12" cy="19.3" r=".6" fill="currentColor"/>',
 };
 const icon = (name, size = 20) =>
   `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] ?? ''}</svg>`;
@@ -379,6 +392,16 @@ function renderUser(text, pending = false) {
   return t;
 }
 
+/** Collapsed JSON of one event or message, only visible in raw mode. */
+function rawNode(label, obj) {
+  const d = el('details', 'raw');
+  d.append(el('summary', null, `raw · ${label}`));
+  d.addEventListener('toggle', () => {
+    if (d.open && !d.querySelector('pre')) d.append(el('pre', null, typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2)));
+  });
+  return d;
+}
+
 /** One assistant reply: markdown text inline, tool calls and thinking folded
  *  into "steps" groups. Fed either complete history blocks or live job events. */
 class AssistantTurn {
@@ -399,9 +422,18 @@ class AssistantTurn {
     this.refresh();
   }
 
+  /** Last content node, ignoring the wait dot and raw entries. */
+  lastBlock() {
+    return [...this.body.children].filter((c) => c !== this.wait && !c.classList.contains('raw')).pop();
+  }
+
+  raw(label, obj) {
+    this.body.insertBefore(rawNode(label, obj), this.wait.parentNode === this.body ? this.wait : null);
+  }
+
   group() {
     const g = this.groups[this.groups.length - 1];
-    if (g && this.body.lastElementChild === g.el) return g;
+    if (g && this.lastBlock() === g.el) return g;
     const d = el('details', 'steps');
     const sum = el('summary');
     const label = el('span', 'label');
@@ -481,6 +513,13 @@ class AssistantTurn {
           this.draft.final = true;
           this.texts.push(b.text);
           this.draft = null;
+        } else if (this.live) {
+          // Whole block arrived at once (claude sometimes flushes a reply in
+          // one burst): still type it out so live output always streams.
+          const d = el('div', 'md');
+          this.body.append(d);
+          startDraft({ el: d, target: b.text, shown: 0, final: true, paintedAt: 0 });
+          this.texts.push(b.text);
         } else this.addText(b.text);
       } else if (b.type === 'thinking') this.addThinking(b.text);
       else if (b.type === 'tool_use') this.addTool(b);
@@ -491,6 +530,7 @@ class AssistantTurn {
 
   /** One view event from /api/jobs/:id/events (see jobs.js viewEvent). */
   event(e) {
+    if (e.t !== 'delta') this.raw(e.t === 'raw' ? 'unparsed line' : e.t, e.t === 'raw' ? e.text : e);
     if (e.t === 'delta') {
       if (e.kind === 'thinking') {
         this.group().thinkingLive = true;
@@ -508,7 +548,7 @@ class AssistantTurn {
   }
 
   refresh() {
-    const lastChild = [...this.body.children].filter((c) => c !== this.wait).pop();
+    const lastChild = this.lastBlock();
     for (const g of this.groups) {
       const working = this.live && g.el === lastChild;
       g.el.classList.toggle('running', working);
@@ -567,6 +607,7 @@ class AssistantTurn {
 
 function renderHistory(messages) {
   let turn = null;
+  let userTurn = null;
   for (const m of messages) {
     if (m.role === 'user') {
       const text = m.blocks.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
@@ -574,12 +615,14 @@ function renderHistory(messages) {
       if (text) {
         turn?.finish(null);
         turn = null;
-        renderUser(text);
+        userTurn = renderUser(text);
       }
       if (rest.length) (turn ??= new AssistantTurn(false)).blocks(rest);
     } else {
       (turn ??= new AssistantTurn(false)).blocks(m.blocks);
     }
+    if (turn) turn.raw(`history · ${m.role}`, m);
+    else userTurn?.append(rawNode(`history · ${m.role}`, m));
   }
   turn?.finish(null);
 }
@@ -600,6 +643,7 @@ function updateConn(mode) {
   const m = mode ?? (transport.open ? 'ws' : state.follower?.fails ? 'offline' : 'poll');
   c.className = `conn ${m}`;
   c.title = { ws: 'Live (WebSocket)', poll: 'Live (HTTP polling)', offline: 'Offline — retrying' }[m];
+  $('#conn-label').textContent = { ws: 'WebSocket', poll: 'HTTP polling', offline: 'Offline' }[m];
   c.dataset.mode = m;
 }
 
@@ -822,7 +866,6 @@ function setChrome() {
   $('#cwd-chip').textContent = onChat && s ? s.cwd : '';
   $('#cwd-chip').title = s?.cwd ?? '';
   $('#chat-menu-btn').hidden = !(onChat && s);
-  $('#nav-apps').classList.toggle('active', !onChat);
   const pill = $('#cwd-pick');
   pill.classList.toggle('locked', Boolean(s));
   const cwd = s ? s.cwd : state.cwd;
@@ -1022,21 +1065,43 @@ function dayGroup(iso) {
   return d.toLocaleDateString(undefined, { year: 'numeric', month: 'long' });
 }
 
+function navItem(cls, href, iconName, label, active) {
+  const a = el('a', `sb-item ${cls}${active ? ' active' : ''}`);
+  a.href = href;
+  a.title = label;
+  a.innerHTML = `<span class="sb-icon">${icon(iconName, 21)}</span>`;
+  a.append(el('span', 'sb-label', label));
+  // Clicking the entry for the current view should still reset it.
+  a.addEventListener('click', () => {
+    if (location.hash === href || (href === '#/' && !location.hash)) route();
+  });
+  return a;
+}
+
+/** Top half of the sidebar: "New chat" plus one row per FEATURES entry. */
+function renderFeatures() {
+  const nav = $('#sb-features');
+  nav.replaceChildren(navItem('sb-new', '#/', 'edit', 'New chat', state.page === 'chat' && !state.current));
+  for (const f of FEATURES) nav.append(navItem(`sb-feature-${f.id}`, f.href, f.icon, f.label, state.page === f.page));
+}
+
 function renderSidebar() {
+  renderFeatures();
   const list = $('#session-list');
   list.replaceChildren();
-  $('#nav-new').classList.toggle('active', state.page === 'chat' && !state.current);
-  if (!state.sessions.length) {
-    list.append(el('div', 'sb-empty', 'No chats yet'));
+  const q = state.search.trim().toLowerCase();
+  const sessions = q ? state.sessions.filter((s) => `${s.title}\n${s.cwd}`.toLowerCase().includes(q)) : state.sessions;
+  if (!sessions.length) {
+    list.append(el('div', 'sb-section dim', q ? 'No matching chats' : 'No chats yet'));
     return;
   }
-  const sorted = [...state.sessions].sort((a, b) => (b.lastRunAt ?? b.createdAt).localeCompare(a.lastRunAt ?? a.createdAt));
+  const sorted = [...sessions].sort((a, b) => (b.lastRunAt ?? b.createdAt).localeCompare(a.lastRunAt ?? a.createdAt));
   let group = null;
   for (const s of sorted) {
     const g = dayGroup(s.lastRunAt ?? s.createdAt);
     if (g !== group) {
       group = g;
-      list.append(el('div', 'sb-group', g));
+      list.append(el('div', 'sb-section', g));
     }
     const a = el('a', 'sb-item sb-chat' + (state.page === 'chat' && state.current?.id === s.id ? ' active' : ''));
     a.href = `#/c/${s.id}`;
@@ -1057,6 +1122,19 @@ function renderSidebar() {
   }
 }
 
+/** Place a fixed menu next to its anchor, flipping up when there is no room below. */
+function placeMenu(m, anchor) {
+  const r = anchor.getBoundingClientRect();
+  m.style.position = 'fixed';
+  m.style.right = 'auto';
+  m.style.bottom = 'auto';
+  const h = m.offsetHeight;
+  const w = m.offsetWidth;
+  const top = r.bottom + 4 + h > innerHeight - 8 ? Math.max(8, r.top - 4 - h) : r.bottom + 4;
+  m.style.top = `${top}px`;
+  m.style.left = `${Math.max(8, Math.min(r.left, innerWidth - w - 8))}px`;
+}
+
 function popMenu(anchor, items) {
   document.querySelector('.menu.pop')?.remove();
   const m = el('div', 'menu pop');
@@ -1070,12 +1148,8 @@ function popMenu(anchor, items) {
     };
     m.append(b);
   }
-  const r = anchor.getBoundingClientRect();
-  m.style.position = 'fixed';
-  m.style.top = `${Math.min(r.bottom + 4, innerHeight - 60)}px`;
-  m.style.left = `${Math.min(r.left, innerWidth - 200)}px`;
-  m.style.right = 'auto';
   document.body.append(m);
+  placeMenu(m, anchor);
   setTimeout(() => document.addEventListener('click', () => m.remove(), { once: true }));
 }
 
@@ -1116,11 +1190,96 @@ async function refreshRunning() {
 
 function setSidebar(open) {
   const layout = $('#view-main');
+  layout.style.removeProperty('--p');
   if (mobileQuery.matches) layout.classList.toggle('sb-open', open);
   else {
     layout.classList.toggle('sb-collapsed', !open);
     localStorage.setItem('ccweb.sb', open ? '1' : '0');
   }
+}
+/** Desktop keeps the remembered rail/expanded state; the mobile drawer starts closed. */
+function syncSidebarMode() {
+  const layout = $('#view-main');
+  layout.classList.remove('sb-open', 'dragging');
+  layout.classList.toggle('sb-collapsed', !mobileQuery.matches && localStorage.getItem('ccweb.sb') === '0');
+}
+const sidebarOpen = () => (mobileQuery.matches ? $('#view-main').classList.contains('sb-open') : !$('#view-main').classList.contains('sb-collapsed'));
+
+function openSearch() {
+  if (!sidebarOpen()) setSidebar(true);
+  $('#sb-search').hidden = false;
+  $('#sb-search-input').focus();
+}
+function closeSearch() {
+  $('#sb-search').hidden = true;
+  $('#sb-search-input').value = '';
+  state.search = '';
+  renderSidebar();
+}
+
+/** Mobile drawer gestures: drag the open drawer (or backdrop) left to close,
+ *  swipe right from the left edge of the chat to open. Follows the finger. */
+function initDrawerGestures() {
+  const layout = $('#view-main');
+  let g = null;
+  const width = () => $('#sidebar').getBoundingClientRect().width || 300;
+  layout.addEventListener('touchstart', (e) => {
+    if (!mobileQuery.matches || e.touches.length !== 1 || !$('#dir-modal').hidden) return;
+    const t = e.touches[0];
+    const open = layout.classList.contains('sb-open');
+    if (!open && t.clientX > 24) return; // open only from the left edge
+    g = { x: t.clientX, y: t.clientY, open, w: width(), active: false, p: open ? 1 : 0, t: performance.now() };
+  }, { passive: true });
+  layout.addEventListener('touchmove', (e) => {
+    if (!g) return;
+    const t = e.touches[0];
+    const dx = t.clientX - g.x;
+    const dy = t.clientY - g.y;
+    if (!g.active) {
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+      if (Math.abs(dy) > Math.abs(dx)) return void (g = null); // vertical scroll wins
+      g.active = true;
+      layout.classList.add('dragging');
+    }
+    g.p = Math.min(1, Math.max(0, (g.open ? 1 : 0) + dx / g.w));
+    g.v = dx / Math.max(1, performance.now() - g.t);
+    layout.style.setProperty('--p', g.p);
+  }, { passive: true });
+  const end = () => {
+    if (!g) return;
+    const { active, p, open, v = 0 } = g;
+    g = null;
+    if (!active) return;
+    layout.classList.remove('dragging');
+    // A quick flick decides on its own; otherwise snap to the nearer side.
+    setSidebar(Math.abs(v) > 0.5 ? v > 0 : open ? p > 0.6 : p > 0.4);
+  };
+  layout.addEventListener('touchend', end);
+  layout.addEventListener('touchcancel', end);
+}
+
+// ------------------------------------------------------------- settings ----
+const themeQuery = matchMedia('(prefers-color-scheme: light)');
+function applyTheme() {
+  const pref = localStorage.getItem('ccweb.theme') || 'dark';
+  const theme = pref === 'system' ? (themeQuery.matches ? 'light' : 'dark') : pref;
+  document.documentElement.dataset.theme = theme;
+  $('#theme-color').content = theme === 'light' ? '#f9f9f9' : '#000000';
+  for (const b of document.querySelectorAll('[data-theme-pref]')) b.setAttribute('aria-checked', String(b.dataset.themePref === pref));
+}
+
+function setRaw(on) {
+  document.body.classList.toggle('raw-on', on);
+  $('#raw-toggle').checked = on;
+  localStorage.setItem('ccweb.raw', on ? '1' : '0');
+}
+
+function toggleSettings(anchor) {
+  const m = $('#settings-menu');
+  if (!m.hidden) return void (m.hidden = true);
+  $('#settings-user').textContent = state.me ? `Signed in as ${state.me.user}` : '';
+  m.hidden = false;
+  placeMenu(m, anchor);
 }
 
 // --------------------------------------------------------- folder picker ---
@@ -1261,6 +1420,7 @@ function route() {
   }
   document.querySelector('.menu.pop')?.remove();
   $('#chat-menu').hidden = true;
+  $('#settings-menu').hidden = true;
   if (mobileQuery.matches) setSidebar(false);
   const h = location.hash;
   const m = h.match(/^#\/c\/([0-9a-f-]{36})$/);
@@ -1286,7 +1446,7 @@ async function showMain(me) {
   $('#view-main').hidden = false;
   $('#user-name').textContent = me.user;
   $('#avatar').textContent = (me.user[0] || '?').toUpperCase();
-  if (!mobileQuery.matches && localStorage.getItem('ccweb.sb') === '0') $('#view-main').classList.add('sb-collapsed');
+  syncSidebarMode();
   updateConn(transport.forcePoll ? 'poll' : undefined);
   connectWs();
   await loadSessions().catch(() => {});
@@ -1314,17 +1474,68 @@ $('#login-form').addEventListener('submit', async (e) => {
 });
 
 $('#logout').addEventListener('click', async () => {
+  $('#settings-menu').hidden = true;
   await api('POST', '/api/logout').catch(() => {});
   showLogin();
 });
 
 window.addEventListener('hashchange', route);
 $('#sb-close').addEventListener('click', () => setSidebar(false));
-$('#sb-open').addEventListener('click', () => setSidebar(true));
+$('#sb-rail-open').addEventListener('click', () => setSidebar(true));
 $('#sb-menu').addEventListener('click', () => setSidebar(true));
 $('#backdrop').addEventListener('click', () => setSidebar(false));
-$('#backdrop').hidden = false; // shown via .sb-open on mobile only
-for (const a of document.querySelectorAll('.sb-nav a, #top-new')) {
+initDrawerGestures();
+mobileQuery.addEventListener('change', syncSidebarMode);
+
+$('#sb-search-btn').addEventListener('click', () => ($('#sb-search').hidden ? openSearch() : closeSearch()));
+$('#sb-search-clear').addEventListener('click', closeSearch);
+$('#sb-search-input').addEventListener('input', (e) => {
+  state.search = e.target.value;
+  renderSidebar();
+});
+$('#sb-search-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeSearch();
+  if (e.key === 'Enter') $('#session-list .sb-chat')?.click();
+});
+
+applyTheme();
+themeQuery.addEventListener('change', applyTheme);
+setRaw(localStorage.getItem('ccweb.raw') === '1');
+for (const id of ['#sb-user', '#sb-fab-settings']) {
+  $(id).addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleSettings(e.currentTarget);
+  });
+}
+$('#settings-menu').addEventListener('click', (e) => e.stopPropagation());
+document.addEventListener('click', () => ($('#settings-menu').hidden = true));
+for (const b of document.querySelectorAll('[data-theme-pref]')) {
+  b.addEventListener('click', () => {
+    localStorage.setItem('ccweb.theme', b.dataset.themePref);
+    applyTheme();
+  });
+}
+$('#raw-toggle').addEventListener('change', (e) => setRaw(e.target.checked));
+
+document.addEventListener('keydown', (e) => {
+  const mod = e.metaKey || e.ctrlKey;
+  if (e.key === 'Escape') {
+    $('#settings-menu').hidden = true;
+    if (mobileQuery.matches && $('#view-main').classList.contains('sb-open')) setSidebar(false);
+  } else if (mod && e.shiftKey && e.key.toLowerCase() === 'o') {
+    e.preventDefault();
+    if (location.hash === '#/' || !location.hash) route();
+    else location.hash = '#/';
+  } else if (mod && e.shiftKey && e.key.toLowerCase() === 's') {
+    e.preventDefault();
+    setSidebar(!sidebarOpen());
+  } else if (mod && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    openSearch();
+  }
+});
+
+for (const a of document.querySelectorAll('#top-new, #sb-fab-new, .sb-brand')) {
   // Clicking "New chat" while already on it should still reset the view.
   a.addEventListener('click', () => {
     if (location.hash === a.getAttribute('href') || (a.getAttribute('href') === '#/' && !location.hash)) route();

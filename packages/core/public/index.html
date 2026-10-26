@@ -1,14 +1,22 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-  <meta name="theme-color" content="#212121" media="(prefers-color-scheme: dark)">
-  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#000000" id="theme-color">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <title>CC-Web</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27 fill=%27none%27 stroke=%27%23d97757%27 stroke-width=%272.4%27 stroke-linecap=%27round%27%3E%3Cpath d=%27M12 2.5v19M2.5 12h19M5.3 5.3l13.4 13.4M18.7 5.3 5.3 18.7%27/%3E%3C/svg%3E">
   <link rel="stylesheet" href="style.css">
+  <script>
+    // Apply the theme before first paint (no flash). Default: dark.
+    (function () {
+      var p = localStorage.getItem('ccweb.theme') || 'dark';
+      var t = p === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : p;
+      document.documentElement.dataset.theme = t;
+    })();
+  </script>
 </head>
 <body>
   <!-- Login -->
@@ -25,29 +33,45 @@
 
   <!-- Main -->
   <div id="view-main" class="layout" hidden>
-    <aside id="sidebar" class="sidebar" aria-label="Chats">
-      <div class="sb-top">
-        <a href="#/" class="sb-logo icon-btn" title="New chat" data-icon="logo"></a>
-        <button id="sb-close" class="icon-btn" title="Close sidebar" data-icon="sidebar"></button>
+    <aside id="sidebar" class="sidebar" aria-label="Sidebar">
+      <div class="sb-head">
+        <button id="sb-rail-open" class="icon-btn sb-rail-only" title="Open sidebar" data-icon="sidebar"></button>
+        <a href="#/" class="sb-brand sb-wide-only" title="New chat"><span class="sb-brand-logo" data-icon="logo"></span><span>CC-Web</span></a>
+        <span class="grow sb-wide-only"></span>
+        <button id="sb-search-btn" class="icon-btn sb-wide-only" title="Search chats" data-icon="search"></button>
+        <button id="sb-close" class="icon-btn sb-wide-only desktop-only" title="Close sidebar" data-icon="sidebar"></button>
       </div>
-      <nav class="sb-nav">
-        <a href="#/" class="sb-item" id="nav-new"><span data-icon="edit"></span><span>New chat</span></a>
-        <a href="#/apps" class="sb-item" id="nav-apps"><span data-icon="grid"></span><span>Apps</span></a>
-      </nav>
-      <div id="session-list" class="sb-list"></div>
+      <div id="sb-search" class="sb-search" hidden>
+        <span data-icon="search"></span>
+        <input id="sb-search-input" type="search" placeholder="Search chats" autocomplete="off" spellcheck="false" enterkeyhint="search">
+        <button id="sb-search-clear" class="icon-btn small" title="Close search" data-icon="x"></button>
+      </div>
+
+      <div class="sb-scroll">
+        <!-- Feature entries: rendered from FEATURES in app.js -->
+        <nav id="sb-features" class="sb-features" aria-label="Features"></nav>
+        <!-- Chat history, grouped by time -->
+        <div id="session-list" class="sb-list" aria-label="Chats"></div>
+      </div>
+
       <div class="sb-foot">
-        <div class="sb-user">
+        <button id="sb-user" class="sb-user" type="button" title="Settings">
           <span class="avatar" id="avatar">Q</span>
-          <span class="grow" id="user-name">qpj</span>
-          <button id="logout" class="icon-btn" title="Log out" data-icon="logout"></button>
-        </div>
+          <span class="grow sb-wide-only" id="user-name">qpj</span>
+          <span class="sb-wide-only sb-user-gear" data-icon="settings"></span>
+        </button>
+      </div>
+      <!-- Mobile: floating actions like the ChatGPT app -->
+      <div class="sb-fab-row mobile-only">
+        <a href="#/" class="sb-fab" id="sb-fab-new"><span data-icon="edit"></span><span>New chat</span></a>
+        <span class="grow"></span>
+        <button id="sb-fab-settings" class="sb-fab-round" type="button" title="Settings" data-icon="settings"></button>
       </div>
     </aside>
-    <div id="backdrop" class="backdrop" hidden></div>
+    <div id="backdrop" class="backdrop"></div>
 
-    <main class="main">
+    <main class="main" id="main">
       <header class="topbar">
-        <button id="sb-open" class="icon-btn" title="Open sidebar" data-icon="sidebar"></button>
         <button id="sb-menu" class="icon-btn mobile-only" title="Menu" data-icon="menu"></button>
         <div class="top-title">
           <span id="top-title">CC-Web</span>
@@ -56,7 +80,7 @@
         <span class="grow"></span>
         <span id="conn" class="conn" title="connecting"></span>
         <button id="chat-menu-btn" class="icon-btn" title="More" data-icon="more" hidden></button>
-        <a href="#/" id="top-new" class="icon-btn mobile-only" title="New chat" data-icon="edit"></a>
+        <a href="#/" id="top-new" class="icon-btn top-new" title="New chat" data-icon="edit"></a>
         <div id="chat-menu" class="menu" hidden>
           <button id="delete-chat" class="menu-item danger"><span data-icon="trash"></span>Delete chat</button>
         </div>
@@ -115,6 +139,24 @@
         </div>
       </section>
     </main>
+  </div>
+
+  <!-- Settings menu (opened from the sidebar footer / mobile gear) -->
+  <div id="settings-menu" class="menu settings" hidden>
+    <div class="menu-label" id="settings-user"></div>
+    <div class="menu-sep"></div>
+    <div class="menu-label">Theme</div>
+    <div class="seg" id="theme-seg" role="radiogroup" aria-label="Theme">
+      <button type="button" data-theme-pref="system" role="radio"><span data-icon="monitor"></span>System</button>
+      <button type="button" data-theme-pref="dark" role="radio"><span data-icon="moon"></span>Dark</button>
+      <button type="button" data-theme-pref="light" role="radio"><span data-icon="sun"></span>Light</button>
+    </div>
+    <div class="menu-sep"></div>
+    <label class="menu-item switch-row"><span data-icon="code"></span><span class="grow">Show raw events</span>
+      <input type="checkbox" id="raw-toggle" class="switch"></label>
+    <div class="menu-item static"><span data-icon="wifi"></span><span class="grow">Connection</span><span id="conn-label" class="muted small"></span></div>
+    <div class="menu-sep"></div>
+    <button type="button" id="logout" class="menu-item"><span data-icon="logout"></span>Log out</button>
   </div>
 
   <!-- Folder picker -->
