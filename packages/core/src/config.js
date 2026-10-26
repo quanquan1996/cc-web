@@ -100,6 +100,7 @@ export const config = {
   appsDynamicEnabled: bool('APPS_DYNAMIC_ENABLED', false),
   appsSandbox: bool('APPS_SANDBOX', true),
   dataDir: fromRoot(str('DATA_DIR', './data')),
+  jobsRetentionDays: Math.max(1, int('JOBS_RETENTION_DAYS', 30)),
   logLevel: str('LOG_LEVEL', 'info'),
   warnings,
 };

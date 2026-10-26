@@ -2,123 +2,138 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0f1115">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#212121" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
   <title>CC-Web</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27 fill=%27none%27 stroke=%27%23d97757%27 stroke-width=%272.4%27 stroke-linecap=%27round%27%3E%3Cpath d=%27M12 2.5v19M2.5 12h19M5.3 5.3l13.4 13.4M18.7 5.3 5.3 18.7%27/%3E%3C/svg%3E">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <!-- Login -->
-  <section id="view-login" class="view" hidden>
-    <form id="login-form" class="card login-card" autocomplete="on">
-      <h1>CC-Web</h1>
-      <label>User <input name="user" autocomplete="username" required autocapitalize="off"></label>
-      <label>Password <input name="pass" type="password" autocomplete="current-password" required></label>
-      <button type="submit" class="primary">Sign in</button>
-      <p id="login-error" class="error" role="alert"></p>
+  <section id="view-login" class="login" hidden>
+    <form id="login-form" class="login-card" autocomplete="on">
+      <div class="login-logo" aria-hidden="true"></div>
+      <h1>Welcome back</h1>
+      <input name="user" placeholder="User" autocomplete="username" required autocapitalize="off" spellcheck="false">
+      <input name="pass" type="password" placeholder="Password" autocomplete="current-password" required>
+      <button type="submit" class="btn-primary">Continue</button>
+      <p id="login-error" class="login-error" role="alert"></p>
     </form>
   </section>
 
-  <!-- Main console -->
-  <section id="view-main" class="view" hidden>
-    <header class="topbar">
-      <span class="brand">CC-Web</span>
-      <nav class="tabs" role="tablist">
-        <button role="tab" data-tab="sessions" class="tab active">Sessions</button>
-        <button role="tab" data-tab="console" class="tab">Console</button>
-        <button role="tab" data-tab="apps" class="tab">Apps</button>
+  <!-- Main -->
+  <div id="view-main" class="layout" hidden>
+    <aside id="sidebar" class="sidebar" aria-label="Chats">
+      <div class="sb-top">
+        <a href="#/" class="sb-logo icon-btn" title="New chat" data-icon="logo"></a>
+        <button id="sb-close" class="icon-btn" title="Close sidebar" data-icon="sidebar"></button>
+      </div>
+      <nav class="sb-nav">
+        <a href="#/" class="sb-item" id="nav-new"><span data-icon="edit"></span><span>New chat</span></a>
+        <a href="#/apps" class="sb-item" id="nav-apps"><span data-icon="grid"></span><span>Apps</span></a>
       </nav>
-      <button id="logout" class="ghost small">Logout</button>
-    </header>
-
-    <!-- Sessions tab -->
-    <main id="tab-sessions" class="tab-panel">
-      <form id="new-session" class="card">
-        <h2>New session</h2>
-        <label>Title <input name="title" placeholder="optional"></label>
-        <label>Working directory
-          <div class="row">
-            <input name="cwd" id="cwd-input" placeholder="/home/ec2-user/projects/my-repo" required autocapitalize="off" spellcheck="false">
-            <button type="button" id="browse-btn" class="ghost">Browse</button>
-          </div>
-        </label>
-        <div id="dir-browser" class="dir-browser" hidden>
-          <div class="dir-head">
-            <button type="button" id="dir-up" class="ghost small">..</button>
-            <code id="dir-path"></code>
-            <button type="button" id="dir-pick" class="small primary">Use this</button>
-          </div>
-          <ul id="dir-list" class="dir-list"></ul>
-        </div>
-        <button type="submit" class="primary">Create session</button>
-        <p id="session-error" class="error" role="alert"></p>
-      </form>
-
-      <section class="card">
-        <h2>Sessions</h2>
-        <ul id="session-list" class="list"></ul>
-        <p id="session-empty" class="muted" hidden>No sessions yet.</p>
-      </section>
-    </main>
-
-    <!-- Console tab -->
-    <main id="tab-console" class="tab-panel" hidden>
-      <div class="console-head">
-        <div>
-          <strong id="console-title">No session selected</strong>
-          <div class="muted small"><code id="console-cwd"></code></div>
-        </div>
-        <div class="row">
-          <label class="check small" title="Show every raw stream-json event (debug)"><input type="checkbox" id="raw-toggle"> raw</label>
-          <span id="run-status" class="badge">idle</span>
+      <div id="session-list" class="sb-list"></div>
+      <div class="sb-foot">
+        <div class="sb-user">
+          <span class="avatar" id="avatar">Q</span>
+          <span class="grow" id="user-name">qpj</span>
+          <button id="logout" class="icon-btn" title="Log out" data-icon="logout"></button>
         </div>
       </div>
-      <div id="chat" class="chat" aria-live="polite"></div>
-      <form id="prompt-form" class="prompt-form">
-        <textarea id="prompt" rows="3" placeholder="Ask Claude Code… (Ctrl/Cmd+Enter to run)" required></textarea>
-        <div class="row">
-          <label class="check"><input type="checkbox" id="resume"> resume</label>
-          <span class="spacer"></span>
-          <button type="button" id="clear-btn" class="ghost">Clear</button>
-          <button type="button" id="cancel-btn" class="danger" disabled>Cancel</button>
-          <button type="submit" id="run-btn" class="primary">Run</button>
-        </div>
-      </form>
-    </main>
+    </aside>
+    <div id="backdrop" class="backdrop" hidden></div>
 
-    <!-- Apps tab -->
-    <main id="tab-apps" class="tab-panel" hidden>
-      <form id="new-app" class="card">
-        <h2>New app</h2>
-        <div class="row wrap">
-          <label class="grow">Name <input name="name" pattern="[a-z0-9][a-z0-9\-]{0,39}" placeholder="todo" required autocapitalize="off"></label>
-          <label>Type
-            <select name="type">
-              <option value="static">static</option>
-              <option value="dynamic" id="opt-dynamic">dynamic</option>
-            </select>
-          </label>
+    <main class="main">
+      <header class="topbar">
+        <button id="sb-open" class="icon-btn" title="Open sidebar" data-icon="sidebar"></button>
+        <button id="sb-menu" class="icon-btn mobile-only" title="Menu" data-icon="menu"></button>
+        <div class="top-title">
+          <span id="top-title">CC-Web</span>
+          <button id="cwd-chip" class="cwd-chip" type="button" title="Working directory"></button>
         </div>
-        <label>Describe the app <textarea name="prompt" rows="4" required placeholder="A to-do list with local filters and a dark theme"></textarea></label>
-        <p id="dynamic-warning" class="warn small" hidden>Dynamic apps are disabled on the server (APPS_DYNAMIC_ENABLED=false). The code will be generated but not started.</p>
-        <button type="submit" class="primary">Generate with Claude</button>
-        <p id="app-error" class="error" role="alert"></p>
-        <div id="job-box" hidden>
-          <div class="row"><strong id="job-title"></strong><span class="spacer"></span><span id="job-status" class="badge"></span>
-            <button type="button" id="job-cancel" class="danger small">Cancel</button></div>
-          <pre id="job-log" class="job-log"></pre>
+        <span class="grow"></span>
+        <span id="conn" class="conn" title="connecting"></span>
+        <button id="chat-menu-btn" class="icon-btn" title="More" data-icon="more" hidden></button>
+        <a href="#/" id="top-new" class="icon-btn mobile-only" title="New chat" data-icon="edit"></a>
+        <div id="chat-menu" class="menu" hidden>
+          <button id="delete-chat" class="menu-item danger"><span data-icon="trash"></span>Delete chat</button>
         </div>
-      </form>
+      </header>
 
-      <section class="card">
-        <div class="row"><h2>Apps</h2><span class="spacer"></span><button id="apps-refresh" class="ghost small">Refresh</button></div>
-        <p id="apps-unavailable" class="warn" hidden>Apps service unavailable.</p>
-        <ul id="app-list" class="list"></ul>
-        <p id="apps-empty" class="muted" hidden>No apps yet.</p>
+      <!-- Chat -->
+      <section id="page-chat" class="page-chat">
+        <div id="scroller" class="scroller">
+          <div id="thread" class="thread" aria-live="polite"></div>
+          <div id="empty" class="empty" hidden>
+            <h2>What can I help with?</h2>
+          </div>
+        </div>
+        <button id="to-bottom" class="to-bottom" title="Scroll to bottom" data-icon="arrow-down" hidden></button>
+        <div class="composer-wrap">
+          <form id="composer" class="composer">
+            <textarea id="prompt" rows="1" placeholder="Ask Claude Code" enterkeyhint="send" autocomplete="off"></textarea>
+            <div class="composer-bar">
+              <button type="button" id="cwd-pick" class="pill" title="Working directory"><span data-icon="folder"></span><span id="cwd-label">Choose folder</span></button>
+              <span class="grow"></span>
+              <button type="submit" id="send" class="send" title="Send" data-icon="arrow-up" disabled></button>
+              <button type="button" id="stop" class="send stop" title="Stop" data-icon="stop" hidden></button>
+            </div>
+          </form>
+          <p class="disclaimer" id="disclaimer">Claude Code can make mistakes. Tasks keep running when you close this page.</p>
+        </div>
+      </section>
+
+      <!-- Apps -->
+      <section id="page-apps" class="page-apps" hidden>
+        <div class="apps-inner">
+          <h1>Apps</h1>
+          <p class="muted">Small web apps that Claude builds for you, served under <code>/apps/&lt;name&gt;/</code>.</p>
+          <form id="new-app" class="card">
+            <div class="row wrap">
+              <input name="name" class="grow" pattern="[a-z0-9][a-z0-9\-]{0,39}" placeholder="name (e.g. todo)" required autocapitalize="off">
+              <select name="type">
+                <option value="static">static</option>
+                <option value="dynamic">dynamic</option>
+              </select>
+            </div>
+            <textarea name="prompt" rows="3" required placeholder="Describe the app — e.g. a to-do list with filters"></textarea>
+            <p id="dynamic-warning" class="warn small" hidden>Dynamic apps are disabled on the server (APPS_DYNAMIC_ENABLED=false). The code will be generated but not started.</p>
+            <div class="row"><span class="grow"></span><button type="submit" class="btn-primary">Generate</button></div>
+            <p id="app-error" class="error" role="alert"></p>
+            <div id="job-box" hidden>
+              <div class="row"><strong id="job-title" class="grow"></strong><span id="job-status" class="badge"></span>
+                <button type="button" id="job-cancel" class="btn-ghost small">Cancel</button></div>
+              <pre id="job-log" class="job-log"></pre>
+            </div>
+          </form>
+          <div class="row"><h2 class="grow">Your apps</h2><button id="apps-refresh" class="btn-ghost small">Refresh</button></div>
+          <p id="apps-unavailable" class="warn" hidden>Apps service unavailable.</p>
+          <div id="app-list" class="app-grid"></div>
+          <p id="apps-empty" class="muted" hidden>No apps yet.</p>
+        </div>
       </section>
     </main>
-  </section>
+  </div>
 
+  <!-- Folder picker -->
+  <div id="dir-modal" class="modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="dir-title">
+      <div class="modal-head">
+        <h3 id="dir-title">Working directory</h3>
+        <button type="button" id="dir-close" class="icon-btn" title="Close" data-icon="x"></button>
+      </div>
+      <div class="dir-path"><button type="button" id="dir-up" class="icon-btn small" title="Up" data-icon="chevron-left"></button><code id="dir-path"></code></div>
+      <div id="dir-list" class="dir-list"></div>
+      <div class="modal-foot">
+        <span id="dir-error" class="error grow"></span>
+        <button type="button" id="dir-pick" class="btn-primary">Use this folder</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" hidden></div>
   <script type="module" src="app.js"></script>
 </body>
 </html>

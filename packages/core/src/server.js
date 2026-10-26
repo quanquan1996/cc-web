@@ -13,6 +13,7 @@ import { registerAuth } from './auth.js';
 import { registerDirs } from './dirs.js';
 import { registerSessions } from './sessions.js';
 import { registerHistory } from './history.js';
+import { registerJobs, releaseWaiters } from './jobs.js';
 import { registerWs } from './ws.js';
 import { registerAppsApi } from './appsApi.js';
 import { registerAppsProxy, installAppsWsTunnel } from './appsProxy.js';
@@ -48,6 +49,7 @@ registerAuth(app);
 registerDirs(app);
 registerSessions(app);
 registerHistory(app);
+registerJobs(app);
 registerWs(app);
 registerAppsApi(app);
 await registerAppsProxy(app);
@@ -77,6 +79,8 @@ try {
 
 const shutdown = async (sig) => {
   app.log.info({ sig }, 'shutting down');
+  // Running claude jobs are detached and are re-adopted by the next process.
+  releaseWaiters();
   await app.close().catch(() => {});
   process.exit(0);
 };

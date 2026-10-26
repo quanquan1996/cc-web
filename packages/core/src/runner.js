@@ -14,7 +14,12 @@ const KILL_GRACE_MS = 5000;
 const SCRUBBED_ENV = ['JWT_SECRET', 'ORIGIN_SECRET', 'ADMIN_PASS_HASH', 'ADMIN_USER'];
 
 let active = 0;
-export const activeRuns = () => active;
+let externalActive = () => 0;
+/** Lets jobs.js count its detached runs against the same MAX_CONCURRENT_RUNS. */
+export function countExternalRuns(fn) {
+  externalActive = fn;
+}
+export const activeRuns = () => active + externalActive();
 
 export class RunnerError extends Error {
   constructor(message, statusCode = 400) {
@@ -62,22 +67,21 @@ class Run extends EventEmitter {
   }
 }
 
-/**
- * @param {string} prompt
- * @param {{cwd: string, sessionId: string, resume?: boolean, roots?: string[], extraArgs?: string[]}} opts
- */
-export async function run(prompt, { cwd, sessionId, resume = false, roots, extraArgs = [] }) {
+export function validatePrompt(prompt) {
   if (typeof prompt !== 'string' || !prompt.trim()) throw new RunnerError('prompt is required');
   if (prompt.length > 100_000) throw new RunnerError('prompt too long');
-  if (!sessionId) throw new RunnerError('sessionId is required');
-  if (active >= config.maxConcurrentRuns) {
+}
+
+export function assertCapacity() {
+  if (activeRuns() >= config.maxConcurrentRuns) {
     throw new RunnerError(`too many concurrent runs (max ${config.maxConcurrentRuns})`, 429);
   }
-  const safeCwd = await resolveSafe(cwd, roots);
+}
 
+export function claudeArgs(prompt, { sessionId, resume = false, extraArgs = [] }) {
   // A leading "-" would be parsed as a CLI flag.
   const promptArg = prompt.startsWith('-') ? ` ${prompt}` : prompt;
-  const args = [
+  return [
     '-p', promptArg,
     '--output-format', 'stream-json',
     '--verbose',
@@ -85,9 +89,25 @@ export async function run(prompt, { cwd, sessionId, resume = false, roots, extra
     ...config.claudeExtraArgs,
     ...extraArgs,
   ];
+}
 
+export function claudeEnv() {
   const env = { ...process.env };
   for (const k of SCRUBBED_ENV) delete env[k];
+  return env;
+}
+
+/**
+ * @param {string} prompt
+ * @param {{cwd: string, sessionId: string, resume?: boolean, roots?: string[], extraArgs?: string[]}} opts
+ */
+export async function run(prompt, { cwd, sessionId, resume = false, roots, extraArgs = [] }) {
+  validatePrompt(prompt);
+  if (!sessionId) throw new RunnerError('sessionId is required');
+  assertCapacity();
+  const safeCwd = await resolveSafe(cwd, roots);
+  const args = claudeArgs(prompt, { sessionId, resume, extraArgs });
+  const env = claudeEnv();
 
   const child = spawn(config.claudeBin, args, {
     cwd: safeCwd,

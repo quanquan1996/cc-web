@@ -9,7 +9,9 @@ It runs on a Linux EC2 host behind CloudFront. CloudFront terminates TLS with an
 ## Features
 
 - **Single admin account.** No registration. bcrypt password hash, JWT stored in an `HttpOnly` + `Secure` + `SameSite=Strict` cookie, per-IP exponential login lockout, and an Origin check on every write.
-- **`claude -p` runner.** Uses `--output-format stream-json --verbose`, streamed to the browser over WebSocket (`/ws/run`) and rendered as a chat view: text inline, tool calls and thinking collapsed (a `raw` toggle shows every stream-json event). Opening a session first loads its history from Claude Code's own transcript (`GET /api/sessions/:id/history`), so conversations survive restarts, reloads and other browsers. Runs can be cancelled (SIGTERM, then SIGKILL). Each socket runs one process at a time, with a global concurrency cap on top.
+- **Connection-independent tasks.** A prompt becomes a *job* (`POST /api/sessions/:id/jobs`). `claude -p --output-format stream-json --verbose --include-partial-messages` is spawned detached, with stdout/stderr going straight to `data/jobs/<id>.out` / `.err`. Closing the tab, losing the network, the phone sleeping, even restarting core: none of these stop it. A restarted core re-adopts running jobs. One running job per session; a retried submit with the same `clientRequestId` returns the original job instead of starting a second one. Status (`running` / `done` / `failed` / `cancelled`) is kept in `data/jobs/<id>.json`. Jobs can be cancelled (SIGTERM to the process group, then SIGKILL).
+- **Weak-network friendly output.** The browser follows a job by byte cursor: pushed over WebSocket (`/ws/run`) when it works, HTTP long-polling (`GET /api/jobs/:id/events?cursor=&wait=`) when it does not. It switches between them on its own. Each batch carries the cursor it starts from, so nothing is shown twice or skipped. Streaming deltas already superseded by a complete message are dropped server-side, so catching up after an hour offline costs about as much as the final messages.
+- **ChatGPT-style UI.** Collapsible chat sidebar (a drawer on phones), centred thread, bottom composer (Enter sends, Shift+Enter adds a newline), text streamed in as it is typed, a stop button, copy buttons on messages and code blocks, and tool calls / thinking folded into "Used N tools" groups. Opening a chat loads its history from Claude Code's own transcript (`GET /api/sessions/:id/history`), plus the latest job's own event log.
 - **Sessions.** Each session gets a uuid passed as `--session-id`. Later runs use `--resume`. Session metadata lives in `data/sessions.json`.
 - **cwd whitelist.** Paths must sit under `ALLOWED_ROOTS`. Each path goes through `path.resolve` and `realpath`, which blocks `../` traversal and symlink escapes. A directory browser lets you pick a cwd instead of typing one.
 - **Origin guard.** When `ORIGIN_SECRET` is set, any request without CloudFront's `X-Origin-Secret` header gets `403`.
@@ -25,8 +27,8 @@ It runs on a Linux EC2 host behind CloudFront. CloudFront terminates TLS with an
 
 ```
 browser ──HTTPS──▶ CloudFront ──HTTP :8787 + X-Origin-Secret──▶ core (Fastify, 0.0.0.0)
-                                                               ├─ /api/*   auth, dirs, sessions, apps API
-                                                               ├─ /ws/run  spawn claude -p, stream events
+                                                               ├─ /api/*   auth, dirs, sessions, jobs (start/poll/cancel), apps API
+                                                               ├─ /ws/run  push job events (optional; HTTP polling works alone)
                                                                ├─ /        static SPA (packages/core/public)
                                                                └─ /apps/*  ──proxy──▶ apps service (127.0.0.1:8788)
                                                                                      ├─ static apps/<name>/
@@ -38,7 +40,7 @@ cc-web/
 ├─ packages/core/     console backend + SPA (never runs app code)
 ├─ packages/apps/     isolated apps host
 ├─ apps/              generated apps (gitignored; see apps/README.md for app.json)
-├─ data/              sessions.json, audit.log (gitignored)
+├─ data/              sessions.json, audit.log, jobs/ (gitignored)
 ├─ scripts/           hash-pass.js, dev.js
 └─ deploy/            install.sh, systemd units, cloudfront.md
 ```
@@ -90,7 +92,8 @@ Every key is documented in [`.env.example`](.env.example). Summary:
 | `HISTORY_MAX_BYTES` / `HISTORY_MAX_MESSAGES` | `33554432` / `500` | History API limits: bytes read from the end of a transcript / messages returned |
 | `ALLOWED_ROOTS` | `./workspace` | cwd whitelist (comma-separated) |
 | `CLAUDE_BIN` / `CLAUDE_EXTRA_ARGS` | `claude` / — | CLI path and extra flags |
-| `MAX_CONCURRENT_RUNS` | `2` | Global cap on claude processes |
+| `MAX_CONCURRENT_RUNS` | `2` | Global cap on claude processes (chat jobs + app generation) |
+| `JOBS_RETENTION_DAYS` | `30` | Finished jobs' logs in `data/jobs/` are deleted after this many days |
 | `APPS_DIR` | `./apps` | Generated apps |
 | `APPS_DYNAMIC_ENABLED` | `false` | Run dynamic apps (dangerous) |
 | `APPS_SANDBOX` | `true` | CSP sandbox on `/apps/*` responses |
@@ -200,8 +203,10 @@ Running `claude` itself is equivalent to shell access inside `ALLOWED_ROOTS`, as
 ## Implementation notes
 
 - `/apps/*` HTTP is proxied with `@fastify/http-proxy`. WebSocket upgrades on `/apps/*` go through a small raw-socket tunnel in `packages/core/src/appsProxy.js` instead of http-proxy's `websocket: true` option. That option adds its own server `upgrade` listener, which would conflict with `@fastify/websocket` (used by `/ws/run`) on the same server. The tunnel enforces the same origin secret, Origin check and session checks.
-- `/ws/run` sends WebSocket ping frames every 20 s, so CloudFront does not drop idle connections during long tool runs.
-- `stream-json` events are forwarded to the browser untouched (`{type:'event', data}`). `done.sessionId` carries the session id that Claude reported, and core stores it for later `--resume` calls.
+- `/ws/run` sends WebSocket ping frames every 20 s, so CloudFront does not drop idle connections during long tool runs. While subscribed it also sends at least one (possibly empty) batch every 25 s. If the browser hears nothing for 40 s, it treats the socket as dead and switches to polling.
+- Long-polls wait at most 25 s, well under CloudFront's 60 s origin timeout.
+- `cc-web-core.service` uses `KillMode=process`, so `systemctl restart cc-web-core` stops only node. Running claude jobs continue and are re-adopted. The new core checks that the pid is still alive and that its cmdline contains the Claude session id. `systemctl stop` therefore leaves running jobs alone too. To kill them, cancel them in the UI first. For the same reason the core unit has no `PrivateTmp` (systemd wipes it on restart), and jobs get `TMPDIR=DATA_DIR/tmp`.
+- Job event API: `{job, from, cursor, events, more}`. Events are compact view objects (`init`, `delta`, `assistant`, `user`, `result`) whose content blocks use the history API's shape. Claude's raw stream-json stays complete in `data/jobs/<id>.out`.
 
 ## License
 

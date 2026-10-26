@@ -11,6 +11,11 @@ import { audit } from './audit.js';
 const FILE = path.join(config.dataDir, 'sessions.json');
 
 let cache = null;
+const deleteHooks = [];
+/** Called with the session id before a session is deleted. */
+export function onSessionDelete(fn) {
+  deleteHooks.push(fn);
+}
 let writeChain = Promise.resolve();
 
 async function load() {
@@ -72,6 +77,7 @@ export async function deleteSession(id) {
   const all = await load();
   const idx = all.findIndex((s) => s.id === id);
   if (idx === -1) return false;
+  for (const fn of deleteHooks) fn(id);
   all.splice(idx, 1);
   await persist();
   return true;

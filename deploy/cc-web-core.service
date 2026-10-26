@@ -19,12 +19,16 @@ ExecStart=/usr/bin/env node packages/core/src/server.js
 Restart=always
 RestartSec=3
 TimeoutStopSec=15
-KillMode=control-group
+# Only the node process is stopped on restart/deploy: claude jobs run detached
+# (own process group, output straight to DATA_DIR/jobs/) and are re-adopted by
+# the next core process, so a deploy never kills a running task.
+KillMode=process
 
 # Hardening. Claude must still write into ALLOWED_ROOTS and ~/.claude, so the
 # filesystem is not made read-only here; rely on the unprivileged ccweb user.
 NoNewPrivileges=true
-PrivateTmp=true
+# No PrivateTmp: systemd wipes a private /tmp on restart, under jobs that survive it.
+PrivateTmp=false
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

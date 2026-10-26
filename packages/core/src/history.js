@@ -57,6 +57,24 @@ function clipInput(input) {
   return s.length > MAX_TEXT ? { _truncated: s.slice(0, MAX_TEXT) } : input;
 }
 
+/** Claude message content -> normalized blocks. tool_result blocks are kept
+ *  as separate blocks; HistoryBuilder attaches them to their tool_use. */
+export function toBlocks(content) {
+  const items = typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : [];
+  const blocks = [];
+  for (const b of items) {
+    if (b.type === 'text' && b.text) blocks.push({ type: 'text', text: b.text });
+    else if (b.type === 'thinking' && b.thinking) blocks.push({ type: 'thinking', text: b.thinking });
+    else if (b.type === 'image') blocks.push({ type: 'image' });
+    else if (b.type === 'tool_use') blocks.push({ type: 'tool_use', id: b.id, name: b.name, input: clipInput(b.input) });
+    else if (b.type === 'tool_result') {
+      const { text, truncated } = clip(resultText(b.content));
+      blocks.push({ type: 'tool_result', toolUseId: b.tool_use_id, text, isError: Boolean(b.is_error), truncated });
+    }
+  }
+  return blocks;
+}
+
 /** Folds transcript entries into messages. Consecutive assistant entries (one
  *  per content block in the jsonl) form a single assistant turn; tool_result
  *  entries are attached to their tool_use instead of becoming user messages. */
@@ -69,23 +87,17 @@ export class HistoryBuilder {
   add(entry) {
     if (!entry || (entry.type !== 'user' && entry.type !== 'assistant')) return;
     if (entry.isSidechain || entry.isMeta) return;
-    const content = entry.message?.content;
-    const items = typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : [];
     const blocks = [];
-    for (const b of items) {
-      if (b.type === 'text' && b.text) blocks.push({ type: 'text', text: b.text });
-      else if (b.type === 'thinking' && b.thinking) blocks.push({ type: 'thinking', text: b.thinking });
-      else if (b.type === 'image') blocks.push({ type: 'image' });
-      else if (b.type === 'tool_use') {
-        const block = { type: 'tool_use', id: b.id, name: b.name, input: clipInput(b.input) };
-        this.toolUses.set(b.id, block);
-        blocks.push(block);
-      } else if (b.type === 'tool_result') {
-        const { text, truncated } = clip(resultText(b.content));
-        const owner = this.toolUses.get(b.tool_use_id);
-        if (owner) owner.result = { text, isError: Boolean(b.is_error), truncated };
-        else blocks.push({ type: 'tool_result', toolUseId: b.tool_use_id, text, isError: Boolean(b.is_error), truncated });
+    for (const b of toBlocks(entry.message?.content)) {
+      if (b.type === 'tool_use') this.toolUses.set(b.id, b);
+      if (b.type === 'tool_result') {
+        const owner = this.toolUses.get(b.toolUseId);
+        if (owner) {
+          owner.result = { text: b.text, isError: b.isError, truncated: b.truncated };
+          continue;
+        }
       }
+      blocks.push(b);
     }
     if (!blocks.length) return;
     const role = entry.type;
