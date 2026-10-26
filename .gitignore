@@ -1,0 +1,13 @@
+node_modules/
+.env
+*.log
+
+# Runtime artefacts (generated apps, session store, audit log)
+/apps/*
+!/apps/.gitkeep
+!/apps/README.md
+/data/*
+!/data/.gitkeep
+
+# Default dev ALLOWED_ROOTS when none is configured
+/workspace/

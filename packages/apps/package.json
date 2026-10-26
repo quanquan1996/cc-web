@@ -1,0 +1,20 @@
+{
+  "name": "@cc-web/apps",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CC-Web isolated apps host: hot-reloads apps/<name>/ as static sites or supervised Node child processes.",
+  "type": "module",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=20.12"
+  },
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "@fastify/http-proxy": "11.6.5",
+    "@fastify/static": "^10.1.7",
+    "chokidar": "4.0.3",
+    "fastify": "^5.12.7"
+  }
+}

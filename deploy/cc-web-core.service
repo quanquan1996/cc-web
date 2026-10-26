@@ -1,0 +1,35 @@
+# CC-Web core console (login, sessions, claude -p runner, /apps proxy).
+# Installed by deploy/install.sh to /etc/systemd/system/cc-web-core.service.
+# Independent of cc-web-apps.service: neither waits for the other.
+[Unit]
+Description=CC-Web core console
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ccweb
+Group=ccweb
+WorkingDirectory=/opt/cc-web
+EnvironmentFile=/etc/cc-web/env
+Environment=NODE_ENV=production
+# claude installed by the native installer lives in ~/.local/bin of the service user.
+Environment=PATH=/home/ccweb/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env node packages/core/src/server.js
+Restart=always
+RestartSec=3
+TimeoutStopSec=15
+KillMode=control-group
+
+# Hardening. Claude must still write into ALLOWED_ROOTS and ~/.claude, so the
+# filesystem is not made read-only here; rely on the unprivileged ccweb user.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

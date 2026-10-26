@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f1115">
+  <title>CC-Web</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Login -->
+  <section id="view-login" class="view" hidden>
+    <form id="login-form" class="card login-card" autocomplete="on">
+      <h1>CC-Web</h1>
+      <label>User <input name="user" autocomplete="username" required autocapitalize="off"></label>
+      <label>Password <input name="pass" type="password" autocomplete="current-password" required></label>
+      <button type="submit" class="primary">Sign in</button>
+      <p id="login-error" class="error" role="alert"></p>
+    </form>
+  </section>
+
+  <!-- Main console -->
+  <section id="view-main" class="view" hidden>
+    <header class="topbar">
+      <span class="brand">CC-Web</span>
+      <nav class="tabs" role="tablist">
+        <button role="tab" data-tab="sessions" class="tab active">Sessions</button>
+        <button role="tab" data-tab="console" class="tab">Console</button>
+        <button role="tab" data-tab="apps" class="tab">Apps</button>
+      </nav>
+      <button id="logout" class="ghost small">Logout</button>
+    </header>
+
+    <!-- Sessions tab -->
+    <main id="tab-sessions" class="tab-panel">
+      <form id="new-session" class="card">
+        <h2>New session</h2>
+        <label>Title <input name="title" placeholder="optional"></label>
+        <label>Working directory
+          <div class="row">
+            <input name="cwd" id="cwd-input" placeholder="/home/ec2-user/projects/my-repo" required autocapitalize="off" spellcheck="false">
+            <button type="button" id="browse-btn" class="ghost">Browse</button>
+          </div>
+        </label>
+        <div id="dir-browser" class="dir-browser" hidden>
+          <div class="dir-head">
+            <button type="button" id="dir-up" class="ghost small">..</button>
+            <code id="dir-path"></code>
+            <button type="button" id="dir-pick" class="small primary">Use this</button>
+          </div>
+          <ul id="dir-list" class="dir-list"></ul>
+        </div>
+        <button type="submit" class="primary">Create session</button>
+        <p id="session-error" class="error" role="alert"></p>
+      </form>
+
+      <section class="card">
+        <h2>Sessions</h2>
+        <ul id="session-list" class="list"></ul>
+        <p id="session-empty" class="muted" hidden>No sessions yet.</p>
+      </section>
+    </main>
+
+    <!-- Console tab -->
+    <main id="tab-console" class="tab-panel" hidden>
+      <div class="console-head">
+        <div>
+          <strong id="console-title">No session selected</strong>
+          <div class="muted small"><code id="console-cwd"></code></div>
+        </div>
+        <span id="run-status" class="badge">idle</span>
+      </div>
+      <div id="terminal" class="terminal"></div>
+      <form id="prompt-form" class="prompt-form">
+        <textarea id="prompt" rows="3" placeholder="Ask Claude Code… (Ctrl/Cmd+Enter to run)" required></textarea>
+        <div class="row">
+          <label class="check"><input type="checkbox" id="resume"> resume</label>
+          <span class="spacer"></span>
+          <button type="button" id="clear-btn" class="ghost">Clear</button>
+          <button type="button" id="cancel-btn" class="danger" disabled>Cancel</button>
+          <button type="submit" id="run-btn" class="primary">Run</button>
+        </div>
+      </form>
+    </main>
+
+    <!-- Apps tab -->
+    <main id="tab-apps" class="tab-panel" hidden>
+      <form id="new-app" class="card">
+        <h2>New app</h2>
+        <div class="row wrap">
+          <label class="grow">Name <input name="name" pattern="[a-z0-9][a-z0-9\-]{0,39}" placeholder="todo" required autocapitalize="off"></label>
+          <label>Type
+            <select name="type">
+              <option value="static">static</option>
+              <option value="dynamic" id="opt-dynamic">dynamic</option>
+            </select>
+          </label>
+        </div>
+        <label>Describe the app <textarea name="prompt" rows="4" required placeholder="A to-do list with local filters and a dark theme"></textarea></label>
+        <p id="dynamic-warning" class="warn small" hidden>Dynamic apps are disabled on the server (APPS_DYNAMIC_ENABLED=false). The code will be generated but not started.</p>
+        <button type="submit" class="primary">Generate with Claude</button>
+        <p id="app-error" class="error" role="alert"></p>
+        <div id="job-box" hidden>
+          <div class="row"><strong id="job-title"></strong><span class="spacer"></span><span id="job-status" class="badge"></span>
+            <button type="button" id="job-cancel" class="danger small">Cancel</button></div>
+          <pre id="job-log" class="job-log"></pre>
+        </div>
+      </form>
+
+      <section class="card">
+        <div class="row"><h2>Apps</h2><span class="spacer"></span><button id="apps-refresh" class="ghost small">Refresh</button></div>
+        <p id="apps-unavailable" class="warn" hidden>Apps service unavailable.</p>
+        <ul id="app-list" class="list"></ul>
+        <p id="apps-empty" class="muted" hidden>No apps yet.</p>
+      </section>
+    </main>
+  </section>
+
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

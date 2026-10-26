@@ -1,0 +1,44 @@
+# CC-Web isolated apps host (static + dynamic generated apps).
+# Installed by deploy/install.sh to /etc/systemd/system/cc-web-apps.service.
+# Resource limits keep runaway generated code from starving the console.
+[Unit]
+Description=CC-Web apps service (isolated)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ccweb
+Group=ccweb
+WorkingDirectory=/opt/cc-web
+EnvironmentFile=/etc/cc-web/env
+Environment=NODE_ENV=production
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env node packages/apps/src/server.js
+Restart=always
+RestartSec=3
+TimeoutStopSec=15
+# Stop every dynamic-app child together with the service.
+KillMode=control-group
+
+# Resource isolation for the whole unit (service + all dynamic apps).
+MemoryMax=512M
+CPUQuota=50%
+TasksMax=256
+
+# Filesystem sandbox: everything read-only except the apps directory.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/cc-web/apps
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
