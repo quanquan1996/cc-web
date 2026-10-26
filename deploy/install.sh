@@ -121,15 +121,15 @@ PORT_CORE=8787
 PORT_APPS=8788
 APPS_SERVICE_URL=http://127.0.0.1:8788
 
-ADMIN_USER=admin
+ADMIN_USER=qpj
 # Generate: cd ${INSTALL_DIR} && npm run hash-pass -- 'your-password'
 ADMIN_PASS_HASH=
 JWT_SECRET=$(rand_hex)
 SESSION_TTL_HOURS=12
 COOKIE_SECURE=true
 
-LOGIN_RATE_MAX=5
-LOGIN_RATE_WINDOW_MIN=15
+LOGIN_LOCK_MAX_SEC=3600
+LOGIN_LOCK_RESET_MIN=1440
 TRUST_PROXY=true
 
 # Paste this exact value into CloudFront as origin custom header X-Origin-Secret.

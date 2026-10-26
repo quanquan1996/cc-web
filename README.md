@@ -8,8 +8,8 @@ It runs on a Linux EC2 host behind CloudFront. CloudFront terminates TLS with an
 
 ## Features
 
-- **Single admin account.** No registration. bcrypt password hash, JWT stored in an `HttpOnly` + `Secure` + `SameSite=Strict` cookie, per-IP login lockout, and an Origin check on every write.
-- **`claude -p` runner.** Uses `--output-format stream-json --verbose`, streamed to the browser over WebSocket (`/ws/run`) and rendered with xterm.js. Runs can be cancelled (SIGTERM, then SIGKILL). Each socket runs one process at a time, with a global concurrency cap on top.
+- **Single admin account.** No registration. bcrypt password hash, JWT stored in an `HttpOnly` + `Secure` + `SameSite=Strict` cookie, per-IP exponential login lockout, and an Origin check on every write.
+- **`claude -p` runner.** Uses `--output-format stream-json --verbose`, streamed to the browser over WebSocket (`/ws/run`) and rendered as a chat view: text inline, tool calls and thinking collapsed (a `raw` toggle shows every stream-json event). Opening a session first loads its history from Claude Code's own transcript (`GET /api/sessions/:id/history`), so conversations survive restarts, reloads and other browsers. Runs can be cancelled (SIGTERM, then SIGKILL). Each socket runs one process at a time, with a global concurrency cap on top.
 - **Sessions.** Each session gets a uuid passed as `--session-id`. Later runs use `--resume`. Session metadata lives in `data/sessions.json`.
 - **cwd whitelist.** Paths must sit under `ALLOWED_ROOTS`. Each path goes through `path.resolve` and `realpath`, which blocks `../` traversal and symlink escapes. A directory browser lets you pick a cwd instead of typing one.
 - **Origin guard.** When `ORIGIN_SECRET` is set, any request without CloudFront's `X-Origin-Secret` header gets `403`.
@@ -79,13 +79,15 @@ Every key is documented in [`.env.example`](.env.example). Summary:
 | `PORT_CORE` | `8787` | Console port (0.0.0.0) — the CloudFront origin port |
 | `PORT_APPS` | `8788` | Apps service port (127.0.0.1 only) |
 | `APPS_SERVICE_URL` | `http://127.0.0.1:8788` | Where core proxies `/apps/*` |
-| `ADMIN_USER` / `ADMIN_PASS_HASH` | `admin` / — | Login; hash from `npm run hash-pass` |
+| `ADMIN_USER` / `ADMIN_PASS_HASH` | `qpj` / — | Login; hash from `npm run hash-pass` |
 | `JWT_SECRET` | random per boot | Session signing key |
 | `SESSION_TTL_HOURS` | `12` | Cookie / JWT lifetime |
 | `COOKIE_SECURE` | `true` | `Secure` cookie flag |
 | `ORIGIN_SECRET` | — | Required `X-Origin-Secret` value (enforced only if set) |
 | `TRUST_PROXY` | `true` | Client IP = right-most `X-Forwarded-For` |
-| `LOGIN_RATE_MAX` / `LOGIN_RATE_WINDOW_MIN` | `5` / `15` | Failed logins per IP before lockout |
+| `LOGIN_LOCK_MAX_SEC` / `LOGIN_LOCK_RESET_MIN` | `3600` / `1440` | Exponential per-IP lockout: n-th failure locks for 3^(n-1) s up to the cap; counter forgotten after the reset window |
+| `CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Where Claude Code transcripts are read from for session history |
+| `HISTORY_MAX_BYTES` / `HISTORY_MAX_MESSAGES` | `33554432` / `500` | History API limits: bytes read from the end of a transcript / messages returned |
 | `ALLOWED_ROOTS` | `./workspace` | cwd whitelist (comma-separated) |
 | `CLAUDE_BIN` / `CLAUDE_EXTRA_ARGS` | `claude` / — | CLI path and extra flags |
 | `MAX_CONCURRENT_RUNS` | `2` | Global cap on claude processes |

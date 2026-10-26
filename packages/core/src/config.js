@@ -2,6 +2,7 @@
 // exposes a typed config object with dev-friendly defaults.
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
@@ -79,18 +80,21 @@ export const config = {
   portCore: int('PORT_CORE', 8787),
   portApps,
   appsServiceUrl: str('APPS_SERVICE_URL', `http://127.0.0.1:${portApps}`).replace(/\/+$/, ''),
-  adminUser: str('ADMIN_USER', 'admin'),
+  adminUser: str('ADMIN_USER', 'qpj'),
   adminPassHash: str('ADMIN_PASS_HASH'),
   jwtSecret,
   originSecret: str('ORIGIN_SECRET'),
   sessionTtlHours: int('SESSION_TTL_HOURS', 12),
   cookieSecure: bool('COOKIE_SECURE', true),
-  loginRateMax: int('LOGIN_RATE_MAX', 5),
-  loginRateWindowMin: int('LOGIN_RATE_WINDOW_MIN', 15),
+  loginLockMaxSec: Math.max(1, int('LOGIN_LOCK_MAX_SEC', 3600)),
+  loginLockResetMin: Math.max(1, int('LOGIN_LOCK_RESET_MIN', 1440)),
   trustProxy: bool('TRUST_PROXY', true),
   allowedRoots,
   claudeBin: str('CLAUDE_BIN', 'claude'),
   claudeExtraArgs: str('CLAUDE_EXTRA_ARGS').split(/\s+/).filter(Boolean),
+  claudeProjectsDir: path.resolve(str('CLAUDE_PROJECTS_DIR', path.join(os.homedir(), '.claude', 'projects'))),
+  historyMaxBytes: int('HISTORY_MAX_BYTES', 32 * 1024 * 1024),
+  historyMaxMessages: int('HISTORY_MAX_MESSAGES', 500),
   maxConcurrentRuns: int('MAX_CONCURRENT_RUNS', 2),
   appsDir: fromRoot(str('APPS_DIR', './apps')),
   appsDynamicEnabled: bool('APPS_DYNAMIC_ENABLED', false),

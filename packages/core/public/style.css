@@ -124,16 +124,59 @@ button.link { background: none; border: none; padding: .35rem 0; color: var(--ac
 #tab-console { display: flex; flex-direction: column; height: calc(100dvh - 54px); }
 .console-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: .5rem; }
 .console-head code { word-break: break-all; }
-.terminal {
-  flex: 1; min-height: 220px;
+.chat {
+  flex: 1; min-height: 220px; overflow-y: auto; overscroll-behavior: contain;
   background: #0b0d12;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: .4rem;
-  overflow: hidden;
+  padding: .6rem .75rem;
+  font-size: .9rem;
 }
-.terminal .xterm { height: 100%; }
-.fallback-term { margin: 0; height: 100%; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: .82rem; }
+.msg { margin: 0 0 .75rem; }
+.msg.user {
+  margin-left: auto; max-width: 85%; width: fit-content;
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: .45rem .7rem;
+}
+.msg.assistant { border-left: 2px solid var(--accent); padding-left: .65rem; }
+.md { white-space: pre-wrap; word-break: break-word; margin: .25rem 0; }
+.md code, .tool-arg { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: .85em; }
+.md code { background: var(--panel-2); padding: .05rem .3rem; border-radius: 4px; }
+.md .h { display: inline-block; margin-top: .3rem; color: var(--accent); }
+pre.code, pre.io {
+  margin: .3rem 0; padding: .5rem .6rem; overflow: auto; max-height: 420px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+  font-size: .8rem; white-space: pre-wrap; word-break: break-word;
+}
+pre.io.err { color: var(--danger); }
+.note { color: var(--muted); font-size: .8rem; margin: .25rem 0 .5rem; white-space: pre-wrap; word-break: break-word; }
+.note.err { color: var(--danger); }
+.note.warn { color: var(--warn); }
+.note.ok { color: var(--ok); }
+
+/* Collapsed tool calls / thinking / raw events */
+details.tool, details.thinking, details.raw { margin: .25rem 0; }
+details > summary {
+  display: flex; align-items: center; gap: .45rem; min-width: 0;
+  padding: .2rem .4rem; border-radius: 6px; cursor: pointer;
+  color: var(--muted); font-size: .82rem; list-style: none;
+}
+details > summary::-webkit-details-marker { display: none; }
+details > summary::before { content: '▸'; flex: none; }
+details[open] > summary::before { content: '▾'; }
+details > summary:hover { background: var(--panel-2); }
+.tool-name { flex: none; color: var(--accent); font-weight: 600; }
+.tool-arg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.tool-status { flex: none; font-size: .75rem; }
+.tool-status.ok { color: var(--ok); }
+.tool-status.err { color: var(--danger); }
+details.tool.error .tool-name { color: var(--danger); }
+.tool-body, details.thinking > .md { padding-left: 1rem; }
+details.thinking > .md { color: var(--muted); font-style: italic; }
+.io-label { color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; margin-top: .3rem; }
+details.raw { display: none; }
+.chat.show-raw details.raw { display: block; }
+details.raw > summary { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; color: var(--warn); }
 .prompt-form { margin-top: .6rem; padding-bottom: env(safe-area-inset-bottom); }
 .prompt-form textarea { margin: 0 0 .5rem; }
 
@@ -160,4 +203,6 @@ button.link { background: none; border: none; padding: .35rem 0; color: var(--ac
   .item { flex-wrap: wrap; }
   .item .grow { flex-basis: 100%; }
   #tab-console { height: calc(100dvh - 50px); }
+  .chat { padding: .5rem; }
+  .msg.user { max-width: 95%; }
 }

@@ -35,96 +35,228 @@ async function api(method, url, body) {
   return data;
 }
 
-// ----------------------------------------------------------- terminal ----
-const ANSI = { dim: '\x1b[2m', cyan: '\x1b[36m', green: '\x1b[32m', red: '\x1b[31m', yellow: '\x1b[33m', bold: '\x1b[1m', reset: '\x1b[0m' };
+// --------------------------------------------------------------- chat ----
+// Conversation rendered as DOM, close to Claude Code's own UI: user/assistant
+// text inline, tool calls and thinking collapsed in <details>. History comes
+// from GET /api/sessions/:id/history, live turns from WS /ws/run; both are
+// normalized to the same block shape (see packages/core/src/history.js).
+const chat = $('#chat');
+const tools = new Map(); // tool_use id -> { details, status, body }
+let turn = null; // assistant turn currently being appended to
+let historyToken = 0;
 
-const out = (() => {
-  const el = $('#terminal');
-  const TerminalCtor = window.Terminal?.Terminal ?? window.Terminal;
-  if (typeof TerminalCtor === 'function') {
-    const term = new TerminalCtor({
-      convertEol: true,
-      disableStdin: true,
-      cursorBlink: false,
-      fontSize: window.innerWidth < 600 ? 12 : 13,
-      scrollback: 10000,
-      theme: { background: '#0b0d12' },
-    });
-    let fit = null;
-    if (window.FitAddon) {
-      fit = new window.FitAddon.FitAddon();
-      term.loadAddon(fit);
-    }
-    term.open(el);
-    const refit = () => {
-      try {
-        fit?.fit();
-      } catch {
-        /* hidden */
-      }
-    };
-    window.addEventListener('resize', refit);
-    return { write: (s) => term.write(s), clear: () => term.clear(), refit };
-  }
-  // Fallback when the CDN is unreachable: plain <pre>.
-  const pre = document.createElement('pre');
-  pre.className = 'fallback-term';
-  el.appendChild(pre);
-  return {
-    write: (s) => {
-      pre.textContent += s.replace(/\x1b\[[0-9;]*m/g, '');
-      pre.scrollTop = pre.scrollHeight;
-    },
-    clear: () => {
-      pre.textContent = '';
-    },
-    refit: () => {},
-  };
-})();
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
 
-const line = (s = '', color) => out.write((color ? ANSI[color] + s + ANSI.reset : s) + '\r\n');
+// Append while keeping the view pinned to the bottom if it already was.
+function append(node, parent = chat) {
+  const pinned = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80;
+  parent.append(node);
+  if (pinned) chat.scrollTop = chat.scrollHeight;
+}
 
-function short(v, n = 160) {
-  const s = typeof v === 'string' ? v : JSON.stringify(v);
+function clearChat() {
+  chat.replaceChildren();
+  tools.clear();
+  turn = null;
+}
+
+const note = (text, cls = '') => append(el('div', `note ${cls}`, text));
+
+function short(v, n = 120) {
+  const s = (typeof v === 'string' ? v : JSON.stringify(v) ?? '').replace(/\s+/g, ' ').trim();
   return s.length > n ? s.slice(0, n) + '…' : s;
 }
 
-function toolResultText(content) {
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) return content.map((c) => (c.type === 'text' ? c.text : `[${c.type}]`)).join('\n');
-  return JSON.stringify(content);
+// Minimal, escape-first markdown: fenced code, inline code, bold, headings.
+function esc(s) {
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+}
+function markdown(text) {
+  const frag = document.createDocumentFragment();
+  const parts = text.split(/```[^\n]*\n([\s\S]*?)```/g);
+  parts.forEach((part, i) => {
+    if (i % 2) {
+      const block = el('pre', 'code');
+      block.append(el('code', null, part.replace(/\n$/, '')));
+      frag.append(block);
+      return;
+    }
+    if (!part.trim()) return;
+    const div = el('div', 'md');
+    div.innerHTML = esc(part.replace(/^\n+|\n+$/g, ''))
+      .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/^#{1,6} (.*)$/gm, '<strong class="h">$1</strong>');
+    frag.append(div);
+  });
+  return frag;
 }
 
-// Render one claude stream-json event.
+// One-line summary argument per tool, like Claude Code's "Bash(ls -la)".
+function toolArg(name, input = {}) {
+  const pick = (...keys) => keys.map((k) => input[k]).find((v) => typeof v === 'string' && v);
+  switch (name) {
+    case 'Bash': return pick('command');
+    case 'Read': case 'Write': case 'Edit': case 'MultiEdit': case 'NotebookEdit':
+      return pick('file_path', 'notebook_path');
+    case 'Grep': case 'Glob': return [pick('pattern'), input.path].filter(Boolean).join('  in ');
+    case 'WebFetch': return pick('url');
+    case 'WebSearch': return pick('query');
+    case 'Task': case 'Agent': return pick('description', 'prompt');
+    case 'TodoWrite': return Array.isArray(input.todos) ? `${input.todos.length} todos` : '';
+    default: return Object.values(input ?? {}).find((v) => typeof v === 'string') ?? '';
+  }
+}
+
+const io = (text, cls = '') => el('pre', `io ${cls}`, text);
+
+function toolBlock(b) {
+  const d = el('details', 'tool');
+  const sum = el('summary');
+  const status = el('span', 'tool-status pending', '…');
+  sum.append(el('span', 'tool-name', b.name), el('span', 'tool-arg', short(toolArg(b.name, b.input))), status);
+  const body = el('div', 'tool-body');
+  const input = b.name === 'Bash' && typeof b.input?.command === 'string'
+    ? b.input.command + (b.input.description ? `\n# ${b.input.description}` : '')
+    : JSON.stringify(b.input, null, 2);
+  body.append(el('div', 'io-label', 'Input'), io(input));
+  d.append(sum, body);
+  tools.set(b.id, { details: d, status, body });
+  if (b.result) setToolResult(b.id, b.result);
+  return d;
+}
+
+function setToolResult(id, r) {
+  const t = tools.get(id);
+  if (!t) {
+    // Result whose tool_use is outside the loaded window.
+    const d = el('details', 'tool');
+    const sum = el('summary');
+    sum.append(el('span', 'tool-name', 'result'), el('span', 'tool-arg', short(r.text)));
+    d.append(sum, io(r.text, r.isError ? 'err' : ''));
+    append(d, assistantTurn());
+    return;
+  }
+  const n = r.text ? r.text.split('\n').length : 0;
+  t.status.className = `tool-status ${r.isError ? 'err' : 'ok'}`;
+  t.status.textContent = r.isError ? '✗ error' : `✓ ${n} line${n === 1 ? '' : 's'}`;
+  t.body.append(
+    el('div', 'io-label', r.isError ? 'Error' : 'Output'),
+    io((r.text || '(no output)') + (r.truncated ? '\n… (truncated)' : ''), r.isError ? 'err' : ''),
+  );
+  if (r.isError) t.details.classList.add('error');
+}
+
+function assistantTurn() {
+  if (!turn) {
+    turn = el('div', 'msg assistant');
+    append(turn);
+  }
+  return turn;
+}
+
+function renderBlock(b) {
+  const parent = assistantTurn();
+  if (b.type === 'text') append(markdown(b.text), parent);
+  else if (b.type === 'thinking') {
+    const d = el('details', 'thinking');
+    d.append(el('summary', null, 'Thinking'), el('div', 'md', b.text));
+    append(d, parent);
+  } else if (b.type === 'tool_use') append(toolBlock(b), parent);
+  else if (b.type === 'tool_result') setToolResult(b.toolUseId, b);
+  else if (b.type === 'image') append(el('div', 'note', '[image]'), parent);
+}
+
+function userMessage(text) {
+  turn = null;
+  chat.querySelector('.note.empty')?.remove();
+  const m = el('div', 'msg user');
+  m.append(markdown(text));
+  append(m);
+}
+
+function renderMessage(m) {
+  if (m.role === 'user') {
+    const text = m.blocks.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
+    if (text) userMessage(text);
+    for (const b of m.blocks) if (b.type !== 'text') renderBlock(b);
+  } else {
+    m.blocks.forEach(renderBlock);
+  }
+}
+
+// stream-json content -> normalized blocks (same shape as the history API).
+function normalize(content) {
+  if (typeof content === 'string') return [{ type: 'text', text: content }];
+  const blocks = [];
+  for (const b of content ?? []) {
+    if (b.type === 'text' && b.text) blocks.push({ type: 'text', text: b.text });
+    else if (b.type === 'thinking' && b.thinking) blocks.push({ type: 'thinking', text: b.thinking });
+    else if (b.type === 'tool_use') blocks.push({ type: 'tool_use', id: b.id, name: b.name, input: b.input });
+    else if (b.type === 'tool_result') {
+      const c = b.content;
+      const text = typeof c === 'string' ? c
+        : Array.isArray(c) ? c.map((x) => (x.type === 'text' ? x.text : `[${x.type}]`)).join('\n')
+        : JSON.stringify(c ?? '');
+      blocks.push({ type: 'tool_result', toolUseId: b.tool_use_id, text, isError: Boolean(b.is_error) });
+    } else if (b.type === 'image') blocks.push({ type: 'image' });
+  }
+  return blocks;
+}
+
+// Every WS message is kept as a collapsed raw entry, visible only in raw mode.
+function rawEvent(msg) {
+  const ev = msg.type === 'event' ? msg.data : msg;
+  const label = msg.type === 'event' ? `event · ${ev?.type ?? '?'}${ev?.subtype ? '/' + ev.subtype : ''}` : msg.type;
+  const d = el('details', 'raw');
+  d.append(el('summary', null, `raw · ${label}`), io(JSON.stringify(ev, null, 2)));
+  append(d, turn ?? chat);
+}
+
+// Render one claude stream-json event. Other types only show in raw mode.
 function renderEvent(ev) {
   switch (ev.type) {
     case 'system':
-      if (ev.subtype === 'init') line(`● session ${ev.session_id} · ${ev.model ?? ''} · ${ev.cwd ?? ''}`, 'dim');
-      else line(`[system] ${short(ev)}`, 'dim');
+      if (ev.subtype === 'init') note(`● ${ev.model ?? ''} · ${ev.cwd ?? ''}`);
       break;
     case 'assistant':
-      for (const b of ev.message?.content ?? []) {
-        if (b.type === 'text') line(b.text);
-        else if (b.type === 'thinking') line(short(b.thinking, 400), 'dim');
-        else if (b.type === 'tool_use') line(`⚙ ${b.name} ${short(b.input)}`, 'cyan');
-      }
+      normalize(ev.message?.content).forEach(renderBlock);
       break;
     case 'user':
-      for (const b of ev.message?.content ?? []) {
-        if (b.type !== 'tool_result') continue;
-        const lines = toolResultText(b.content).split('\n');
-        const shown = lines.slice(0, 15).join('\n');
-        line(shown + (lines.length > 15 ? `\n… (${lines.length - 15} more lines)` : ''), b.is_error ? 'red' : 'dim');
+      for (const b of normalize(ev.message?.content)) {
+        if (b.type === 'tool_result') setToolResult(b.toolUseId, b);
       }
       break;
     case 'result': {
       const cost = typeof ev.total_cost_usd === 'number' ? ` · $${ev.total_cost_usd.toFixed(4)}` : '';
       const dur = ev.duration_ms ? ` · ${(ev.duration_ms / 1000).toFixed(1)}s` : '';
-      line(`${ev.is_error ? '✖' : '✔'} ${ev.subtype ?? 'result'}${dur}${cost}`, ev.is_error ? 'red' : 'green');
+      note(`${ev.is_error ? '✖' : '✔'} ${ev.subtype ?? 'result'}${dur}${cost}`, ev.is_error ? 'err' : 'ok');
+      turn = null;
       break;
     }
-    default:
-      line(short(ev, 300), 'dim');
+  }
+}
+
+async function loadHistory(s) {
+  const token = ++historyToken;
+  const loading = el('div', 'note', 'loading history…');
+  append(loading);
+  try {
+    const { messages, truncated } = await api('GET', `/api/sessions/${s.id}/history`);
+    if (token !== historyToken) return;
+    loading.remove();
+    if (truncated) note('(older messages not shown)');
+    messages.forEach(renderMessage);
+    turn = null;
+    if (!messages.length) append(el('div', 'note empty', 'No messages yet.'));
+    chat.scrollTop = chat.scrollHeight;
+  } catch (err) {
+    if (token === historyToken) loading.textContent = `history unavailable: ${err.message}`;
   }
 }
 
@@ -151,7 +283,7 @@ function connectWs() {
   };
   ws.onclose = () => {
     if (state.running) {
-      line('connection closed — the run was cancelled', 'red');
+      note('connection closed — the run was cancelled', 'err');
       setRunning(false);
     }
     ws = null;
@@ -160,6 +292,7 @@ function connectWs() {
 }
 
 function handleWsMessage(msg) {
+  rawEvent(msg);
   switch (msg.type) {
     case 'started':
       setRunning(true, `running (pid ${msg.pid})`);
@@ -168,10 +301,11 @@ function handleWsMessage(msg) {
       renderEvent(msg.data);
       break;
     case 'stderr':
-      line(msg.line, 'yellow');
+      note(msg.line, 'warn');
       break;
     case 'done':
-      line(`— exit ${msg.exitCode} —`, msg.exitCode === 0 ? 'dim' : 'red');
+      if (msg.exitCode !== 0) note(`— exit ${msg.exitCode} —`, 'err');
+      turn = null;
       setRunning(false, msg.exitCode === 0 ? 'done' : `exit ${msg.exitCode}`);
       if (state.current) {
         state.current.lastRunAt = new Date().toISOString();
@@ -180,7 +314,7 @@ function handleWsMessage(msg) {
       loadSessions().catch(() => {});
       break;
     case 'error':
-      line(`error: ${msg.message}`, 'red');
+      note(`error: ${msg.message}`, 'err');
       setRunning(false, 'error');
       break;
   }
@@ -199,16 +333,16 @@ async function runPrompt() {
   const prompt = $('#prompt').value.trim();
   if (!prompt || state.running) return;
   if (!state.current) {
-    line('Select or create a session first (Sessions tab).', 'red');
+    note('Select or create a session first (Sessions tab).', 'err');
     return;
   }
   try {
     await connectWs();
   } catch (err) {
-    line(`cannot connect: ${err.message}`, 'red');
+    note(`cannot connect: ${err.message}`, 'err');
     return;
   }
-  line(`❯ ${prompt}`, 'bold');
+  userMessage(prompt);
   setRunning(true, 'starting');
   ws.send(
     JSON.stringify({
@@ -240,7 +374,6 @@ async function showMain() {
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
   for (const id of ['sessions', 'console', 'apps']) $(`#tab-${id}`).hidden = id !== name;
-  if (name === 'console') setTimeout(out.refit, 0);
   if (name === 'apps') loadApps().catch(() => {});
 }
 
@@ -289,11 +422,11 @@ function selectSession(s) {
   $('#console-title').textContent = s ? s.title : 'No session selected';
   $('#console-cwd').textContent = s ? s.cwd : '';
   $('#resume').checked = Boolean(s?.lastRunAt);
-  out.clear();
+  clearChat();
+  historyToken += 1;
   if (s) {
-    line(`Session ${s.id}`, 'dim');
-    line(`cwd ${s.cwd}`, 'dim');
     switchTab('console');
+    loadHistory(s);
     $('#prompt').focus();
   }
   loadSessions().catch(() => {});
@@ -480,9 +613,15 @@ $('#prompt').addEventListener('keydown', (e) => {
 });
 $('#cancel-btn').addEventListener('click', () => {
   ws?.send(JSON.stringify({ type: 'cancel' }));
-  line('cancelling…', 'yellow');
+  note('cancelling…', 'warn');
 });
-$('#clear-btn').addEventListener('click', () => out.clear());
+$('#clear-btn').addEventListener('click', clearChat);
+$('#raw-toggle').checked = localStorage.getItem('ccweb.raw') === '1';
+chat.classList.toggle('show-raw', $('#raw-toggle').checked);
+$('#raw-toggle').addEventListener('change', (e) => {
+  chat.classList.toggle('show-raw', e.target.checked);
+  localStorage.setItem('ccweb.raw', e.target.checked ? '1' : '0');
+});
 
 $('#new-app [name=type]').addEventListener('change', updateDynamicWarning);
 $('#new-app').addEventListener('submit', async (e) => {

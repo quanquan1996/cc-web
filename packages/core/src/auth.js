@@ -1,5 +1,5 @@
 // Single-admin auth: bcrypt password check, JWT in an HttpOnly cookie,
-// per-IP login rate limiting and an Origin check for state-changing requests.
+// per-IP exponential login lockout and an Origin check for state-changing requests.
 import crypto from 'node:crypto';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
@@ -7,7 +7,8 @@ import { config, COOKIE_NAME } from './config.js';
 import { audit } from './audit.js';
 
 const TTL_SEC = config.sessionTtlHours * 3600;
-const WINDOW_MS = config.loginRateWindowMin * 60_000;
+const LOCK_MAX_MS = config.loginLockMaxSec * 1000;
+const LOCK_RESET_MS = config.loginLockResetMin * 60_000;
 
 // Used when the user name is wrong so response time does not reveal it.
 const DUMMY_HASH = bcrypt.hashSync(crypto.randomBytes(16).toString('hex'), 10);
@@ -58,29 +59,34 @@ export async function verifyAuth(req, reply) {
   req.user = user;
 }
 
-// --- login rate limiting (failed attempts per IP) -------------------------
-const failures = new Map(); // ip -> { count, first }
+// --- login lockout (exponential backoff per IP) ---------------------------
+// The n-th consecutive failure locks the IP for 3^(n-1) s (1, 3, 9, 27 …),
+// capped at LOGIN_LOCK_MAX_SEC. The counter is forgotten after
+// LOGIN_LOCK_RESET_MIN without failures, or on a successful login.
+const failures = new Map(); // ip -> { count, lockedUntil, last }
 
 function lockedFor(ip) {
   const f = failures.get(ip);
-  if (!f) return 0;
-  const elapsed = Date.now() - f.first;
-  if (elapsed > WINDOW_MS) {
-    failures.delete(ip);
-    return 0;
-  }
-  return f.count >= config.loginRateMax ? WINDOW_MS - elapsed : 0;
+  return f ? Math.max(0, f.lockedUntil - Date.now()) : 0;
 }
 
+/** Records a failure and returns the new lock duration in ms. */
 function recordFailure(ip) {
-  const f = failures.get(ip);
-  if (!f || Date.now() - f.first > WINDOW_MS) failures.set(ip, { count: 1, first: Date.now() });
-  else f.count += 1;
+  const now = Date.now();
+  const f = failures.get(ip) ?? { count: 0, lockedUntil: 0, last: 0 };
+  f.count += 1;
+  f.last = now;
+  const lockMs = Math.min(3 ** Math.min(f.count - 1, 30) * 1000, LOCK_MAX_MS);
+  f.lockedUntil = now + lockMs;
+  failures.set(ip, f);
+  return lockMs;
 }
 
 setInterval(() => {
   const now = Date.now();
-  for (const [ip, f] of failures) if (now - f.first > WINDOW_MS) failures.delete(ip);
+  for (const [ip, f] of failures) {
+    if (now > f.lockedUntil && now - f.last > LOCK_RESET_MS) failures.delete(ip);
+  }
 }, 60_000).unref();
 
 function safeEqual(a, b) {
@@ -105,8 +111,9 @@ export function registerAuth(app) {
     const ip = clientIp(req);
     const wait = lockedFor(ip);
     if (wait > 0) {
-      reply.header('Retry-After', Math.ceil(wait / 1000));
-      return reply.code(429).send({ error: 'too many failed attempts, try again later' });
+      const sec = Math.ceil(wait / 1000);
+      reply.header('Retry-After', sec);
+      return reply.code(429).send({ error: `too many failed attempts, try again in ${sec}s`, retryAfter: sec });
     }
     if (!config.adminPassHash) {
       return reply.code(503).send({ error: 'login not configured (ADMIN_PASS_HASH is empty)' });
@@ -118,10 +125,11 @@ export function registerAuth(app) {
     const userOk = safeEqual(user, config.adminUser);
     const passOk = await bcrypt.compare(pass, userOk ? config.adminPassHash : DUMMY_HASH);
     if (!userOk || !passOk) {
-      recordFailure(ip);
-      req.log.warn({ ip, user }, 'login failed');
-      audit('login_failed', { ip, user });
-      return reply.code(401).send({ error: 'invalid credentials' });
+      const sec = Math.ceil(recordFailure(ip) / 1000);
+      req.log.warn({ ip, user, lockSec: sec }, 'login failed');
+      audit('login_failed', { ip, user, lockSec: sec });
+      reply.header('Retry-After', sec);
+      return reply.code(401).send({ error: `invalid credentials, next attempt allowed in ${sec}s`, retryAfter: sec });
     }
     failures.delete(ip);
     const token = jwt.sign({ sub: config.adminUser }, config.jwtSecret, {
